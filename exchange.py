@@ -18,8 +18,7 @@ class Exchange:
             code = currency["cc"]
             rate = currency["rate"]
 
-            if code in ("USD", "EUR"):
-                self.rates[code] = rate
+            self.rates[code] = rate
 
     def convert(self, amount: float, from_currency: str, to_currency: str) -> float:
         from_rate = self.rates[from_currency]

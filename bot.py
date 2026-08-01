@@ -1,37 +1,33 @@
 import asyncio
-from email import message
-from aiogram.utils.keyboard import InlineKeyboardBuilder
+
 from aiogram.types import CallbackQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from exchange import Exchange
-from constants import CURRENCIES
-
 from aiogram import Bot, Dispatcher
 from aiogram.types import Message
 from aiogram.filters import Command
 
 from config import BOT_TOKEN
+from exchange import Exchange
+from constants import CURRENCIES
+from keyboards import ( 
+    main_currency_keyboard,
+    all_currencies_keyboard,
+    search_results_keyboard,
+)  
+
+
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 exchange = Exchange()
+
 class CurrencyStates(StatesGroup):
     from_currency = State()
     to_currency = State()
     amount = State()
+    search = State()
 
-
-def currency_keyboard():
-    builder = InlineKeyboardBuilder()
-
-    builder.button(text="🇺🇦 UAH", callback_data="UAH")
-    builder.button(text="🇺🇸 USD", callback_data="USD")
-    builder.button(text="🇪🇺 EUR", callback_data="EUR")
-
-    builder.adjust(1)
-
-    return builder.as_markup()
 
 @dp.message(Command(commands=["start"]))
 async def process_start_command(message: Message):
@@ -39,7 +35,7 @@ async def process_start_command(message: Message):
     """Привет! Это калькулятор валют в Telegram.
 
 Выберите валюту, из которой хотите конвертировать:""",
-    reply_markup=currency_keyboard()
+    reply_markup=main_currency_keyboard()
 )
 
 
@@ -47,18 +43,73 @@ async def process_start_command(message: Message):
 async def process_currency(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
+    if callback.data == "ALL":
+        await callback.message.edit_text(
+            "🌍 Выберите валюту:",
+            reply_markup=all_currencies_keyboard()
+        )
+        return
+
+    if callback.data.startswith("page:"):
+        page = int(callback.data.split(":")[1])
+
+        await callback.message.edit_reply_markup(
+            reply_markup=all_currencies_keyboard(page)
+        )
+
+        return
+
+    if callback.data == "ALL":
+        await callback.message.edit_text(
+            "🌍 Выберите валюту:",
+            reply_markup=all_currencies_keyboard()
+        )
+        return
+
+    if callback.data.startswith("page:"):
+        page = int(callback.data.split(":")[1])
+
+        await callback.message.edit_reply_markup(
+            reply_markup=all_currencies_keyboard(page)
+        )
+        return
+
+    if callback.data == "BACK":
+        await callback.message.edit_text(
+            "Выберите валюту:",
+            reply_markup=main_currency_keyboard()
+        )
+        return
+
+    if callback.data == "ignore":
+        return
+
+    if callback.data == "SEARCH":
+        await state.set_state(CurrencyStates.search)
+        await callback.message.answer("🔍 Введите код или название валюты:"
+        )
+        return
+    
     current_state = await state.get_state()
 
     if current_state is None:
+
+        if callback.data not in CURRENCIES:
+            return
+
         await state.update_data(from_currency=callback.data)
         await state.set_state(CurrencyStates.to_currency)
 
         await callback.message.answer(
             "Теперь выберите валюту, в которую хотите конвертировать:",
-            reply_markup=currency_keyboard()
+            reply_markup=all_currencies_keyboard()
         )
 
     elif current_state == CurrencyStates.to_currency:
+
+        if callback.data not in CURRENCIES:
+            return
+
         await state.update_data(to_currency=callback.data)
         await state.set_state(CurrencyStates.amount)
 
@@ -79,17 +130,48 @@ async def process_amount(message: Message, state: FSMContext):
         result = exchange.convert(amount, from_currency, to_currency)
 
         await message.answer(
-            f"{amount} {from_currency} = {result} {to_currency}"
+        f"""💱 Конвертация..
+
+{CURRENCIES[from_currency]["flag"]} {amount:g} {from_currency}
+⬇️
+{CURRENCIES[to_currency]["flag"]} {result:g} {to_currency}"""
+    
         )
         await state.clear()
         await message.answer(
-    "Хотите выполнить ещё одну конвертацию?\n\nВыберите валюту:",
-    reply_markup=currency_keyboard()
+    "Хотите выполнить ещё одну конвертацию?\n\nВыберите валюту, из которой хотите конвертировать:",
+    reply_markup=main_currency_keyboard()
 )
     except ValueError:
         await message.answer(
             "Пожалуйста, введите корректное число."
         )
+
+
+@dp.message(CurrencyStates.search)
+async def process_search(message: Message, state: FSMContext):
+    query = message.text.lower()
+
+    matches = []
+
+    for code, currency in CURRENCIES.items():
+
+        if (
+            query in code.lower()
+            or query in currency["name"].lower()
+        ):
+            matches.append((code, currency))
+
+    if not matches:
+        await message.answer("❌ Ничего не найдено.")
+        return
+
+    await message.answer(
+    "🔍 Найденные валюты:",
+    reply_markup=search_results_keyboard(matches[:10])
+    )
+
+    await state.clear()
 
 
 async def main():
